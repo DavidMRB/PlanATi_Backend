@@ -3,6 +3,13 @@
 .env.*
 !.env.example
 
+# Local overrides and credentials
+*.local
+*.pem
+*.key
+credentials*.json
+secrets*.json
+
 # Python
 .venv/
 venv/
