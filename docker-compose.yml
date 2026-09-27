@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: planati-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: planati
+      POSTGRES_USER: planati
+      POSTGRES_PASSWORD: planati
+    ports:
+      - "5432:5432"
+    volumes:
+      - planati_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  planati_postgres_data:
