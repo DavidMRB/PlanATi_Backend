@@ -46,4 +46,18 @@ async def require_admin(current_user: User = Depends(get_current_user)) -> User:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Se requieren permisos de administrador.",
         )
+    if not current_user.phone_verified or current_user.status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debes completar la verificación telefónica.",
+        )
+    return current_user
+
+
+async def require_active_user(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.phone_verified or current_user.status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debes completar la verificación telefónica.",
+        )
     return current_user

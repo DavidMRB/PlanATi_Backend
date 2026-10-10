@@ -4,7 +4,9 @@ uvicorn[standard]==0.34.2
 httpx==0.28.1
 SQLAlchemy==2.0.40
 asyncpg==0.30.0
+psycopg[binary]==3.2.9
 PyJWT==2.10.1
 pwdlib[argon2]==0.2.1
 alembic==1.15.2
 boto3==1.43.101
+google-auth==2.40.3

@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: planati
       POSTGRES_PASSWORD: planati
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - planati_postgres_data:/var/lib/postgresql/data
 

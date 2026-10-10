@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user, get_db
+from app.api.dependencies import get_db, require_active_user
 from app.models.establishment import Establishment
 from app.models.user import User
 from app.schemas.establishment import (
@@ -60,7 +60,7 @@ async def get_establishment_detail(
 @router.post("", response_model=EstablishmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_establishment_endpoint(
     data: EstablishmentCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> Establishment:
     return await create_establishment(session, current_user.id, data)
@@ -70,7 +70,7 @@ async def create_establishment_endpoint(
 async def update_establishment_endpoint(
     establishment_id: int,
     data: EstablishmentUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> Establishment:
     establishment = await get_establishment(session, establishment_id)
