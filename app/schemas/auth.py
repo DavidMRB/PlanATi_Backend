@@ -14,19 +14,23 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class AuthResponse(BaseModel):
     registration_complete: bool
     requires_phone_verification: bool
+    role: str | None = None
+    establishment_status: str | None = None
 
 
-class GoogleAuthResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class TokenResponse(AuthResponse):
+    pass
+
+
+class GoogleAuthResponse(AuthResponse):
     authenticated: bool = True
-    registration_complete: bool
-    requires_phone_verification: bool
+
+
+class GoogleExchangeRequest(BaseModel):
+    code: str = Field(min_length=8, max_length=255)
 
 
 class PhoneCodeRequest(BaseModel):

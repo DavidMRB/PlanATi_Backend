@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_db, require_active_user
+from app.api.dependencies import get_db, get_optional_current_user, require_active_user
 from app.models.establishment import Establishment
 from app.models.user import User
 from app.schemas.establishment import (
     EstablishmentCreate,
+    EstablishmentDetailResponse,
     EstablishmentNearbyResponse,
     EstablishmentResponse,
     EstablishmentUpdate,
@@ -46,15 +47,40 @@ async def get_nearby_establishments(
     return responses
 
 
-@router.get("/{establishment_id}", response_model=EstablishmentResponse)
+@router.get("/{establishment_id}", response_model=EstablishmentDetailResponse)
 async def get_establishment_detail(
     establishment_id: int,
+    viewer: User | None = Depends(get_optional_current_user),
     session: AsyncSession = Depends(get_db),
-) -> Establishment:
+) -> EstablishmentDetailResponse:
     establishment = await get_establishment(session, establishment_id)
-    if establishment is None:
+    can_preview = viewer is not None and (
+        viewer.role == "admin" or (establishment is not None and establishment.owner_id == viewer.id)
+    )
+    if establishment is None or (establishment.status != "APPROVED" and not can_preview):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Establecimiento no encontrado")
-    return establishment
+
+    available_items = [item for item in establishment.menu_items if item.is_available]
+    ratings = [review.rating for review in establishment.reviews]
+    base = EstablishmentResponse.model_validate(establishment, from_attributes=True)
+    return EstablishmentDetailResponse(
+        **base.model_dump(),
+        products=[item for item in available_items if not item.is_combo],
+        combos=[item for item in available_items if item.is_combo],
+        gallery_images=[image for image in establishment.images if image.image_type == "GALLERY"],
+        menu_images=[image for image in establishment.images if image.image_type == "MENU"],
+        reviews_count=len(ratings),
+        average_rating=round(sum(ratings) / len(ratings), 2) if ratings else None,
+    )
+
+
+def _reject_restaurant_accounts(current_user: User) -> None:
+    # Las cuentas de restaurante gestionan su establecimiento desde /restaurant, sujeto a aprobación.
+    if current_user.role == "restaurant":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Las cuentas de restaurante gestionan su establecimiento desde /restaurant.",
+        )
 
 
 @router.post("", response_model=EstablishmentResponse, status_code=status.HTTP_201_CREATED)
@@ -63,6 +89,7 @@ async def create_establishment_endpoint(
     current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> Establishment:
+    _reject_restaurant_accounts(current_user)
     return await create_establishment(session, current_user.id, data)
 
 
@@ -73,6 +100,7 @@ async def update_establishment_endpoint(
     current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> Establishment:
+    _reject_restaurant_accounts(current_user)
     establishment = await get_establishment(session, establishment_id)
     if establishment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Establecimiento no encontrado")

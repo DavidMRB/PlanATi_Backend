@@ -7,6 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.establishment import Establishment
+    from app.models.oauth_login_code import OAuthLoginCode
     from app.models.phone_verification import PhoneVerificationCode
 
 
@@ -32,4 +34,10 @@ class User(Base):
     )
     phone_verification_codes: Mapped[list["PhoneVerificationCode"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    oauth_login_codes: Mapped[list["OAuthLoginCode"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    establishments: Mapped[list["Establishment"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
     )

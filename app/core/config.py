@@ -8,6 +8,13 @@ class Settings(BaseSettings):
     app_env: str = "development"
     api_v1_prefix: str = "/api/v1"
     secret_key: str = "development-secret"
+    jwt_expiration_minutes: int = 60
+    access_token_cookie_name: str = "access_token"
+    access_token_cookie_path: str = "/"
+    access_token_cookie_max_age_seconds: int = 3600
+    access_token_cookie_samesite: str = "lax"
+    access_token_cookie_secure: bool = False
+    oauth_code_ttl_seconds: int = 120
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"

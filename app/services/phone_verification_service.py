@@ -49,35 +49,61 @@ def _hash_code(code: str) -> str:
     ).hexdigest()
 
 
-async def send_phone_code(session: AsyncSession, user: User, phone_number: str) -> None:
-    if user.phone_verified:
-        raise PhoneVerificationError("El teléfono ya está verificado")
-    normalized_phone = normalize_colombian_phone(phone_number)
+async def _ensure_phone_available(session: AsyncSession, user: User, normalized_phone: str) -> None:
     existing_user = await session.scalar(
         select(User).where(User.phone_number == normalized_phone, User.id != user.id)
     )
     if existing_user is not None:
         raise PhoneVerificationError("El número de teléfono ya está asociado a otra cuenta")
 
+
+async def _issue_code(session: AsyncSession, user: User, normalized_phone: str) -> str:
     now = datetime.now(timezone.utc)
     latest = await session.scalar(
         select(PhoneVerificationCode)
         .where(PhoneVerificationCode.user_id == user.id)
         .order_by(PhoneVerificationCode.created_at.desc())
     )
-    if latest and latest.created_at and (now - latest.created_at).total_seconds() < settings.otp_resend_cooldown_seconds:
-        raise PhoneVerificationError("Demasiadas solicitudes. Intenta nuevamente más tarde")
+    if latest and latest.created_at:
+        latest_created_at = latest.created_at
+        if latest_created_at.tzinfo is None:
+            latest_created_at = latest_created_at.replace(tzinfo=timezone.utc)
+        if (now - latest_created_at).total_seconds() < settings.otp_resend_cooldown_seconds:
+            raise PhoneVerificationError("Demasiadas solicitudes. Intenta nuevamente más tarde")
 
     code = f"{secrets.randbelow(1_000_000):06d}"
-    verification = PhoneVerificationCode(
-        user_id=user.id,
-        phone_number=normalized_phone,
-        code_hash=_hash_code(code),
-        expires_at=now + timedelta(seconds=settings.otp_expiration_seconds),
+    session.add(
+        PhoneVerificationCode(
+            user_id=user.id,
+            phone_number=normalized_phone,
+            code_hash=_hash_code(code),
+            expires_at=now + timedelta(seconds=settings.otp_expiration_seconds),
+        )
     )
-    session.add(verification)
+    return code
+
+
+async def send_phone_code(session: AsyncSession, user: User, phone_number: str) -> None:
+    if user.phone_verified:
+        raise PhoneVerificationError("El teléfono ya está verificado")
+    normalized_phone = normalize_colombian_phone(phone_number)
+    await _ensure_phone_available(session, user, normalized_phone)
+
+    code = await _issue_code(session, user, normalized_phone)
     user.phone_number = normalized_phone
     user.status = "PENDING_PHONE"
+    await session.commit()
+    await get_sms_provider(settings.sms_provider).send_verification_code(normalized_phone, code)
+
+
+async def send_phone_change_code(session: AsyncSession, user: User, phone_number: str) -> None:
+    """Envía el OTP al número nuevo sin tocar la cuenta: el número actual sigue vigente hasta verificarlo."""
+    normalized_phone = normalize_colombian_phone(phone_number)
+    if user.phone_verified and user.phone_number == normalized_phone:
+        raise PhoneVerificationError("Ese ya es tu número verificado")
+    await _ensure_phone_available(session, user, normalized_phone)
+
+    code = await _issue_code(session, user, normalized_phone)
     await session.commit()
     await get_sms_provider(settings.sms_provider).send_verification_code(normalized_phone, code)
 
@@ -111,6 +137,8 @@ async def verify_phone_code(
         await session.commit()
         raise PhoneVerificationError("Código de verificación inválido")
 
+    # Otra cuenta pudo adoptar el número mientras el código estaba pendiente.
+    await _ensure_phone_available(session, user, normalized_phone)
     verification.verified_at = now
     user.phone_number = normalized_phone
     user.phone_verified = True
