@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user, get_db
-from app.models.review import Review, ReviewReply
+from app.api.dependencies import get_db, require_active_user
+from app.models.review import Review, ReviewImage, ReviewReply
 from app.models.user import User
 from app.schemas.review import (
     ReviewCreate,
@@ -39,7 +39,7 @@ async def get_reviews_for_establishment(
 async def create_review_endpoint(
     establishment_id: int,
     request: ReviewCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> Review:
     establishment = await get_establishment_by_id(session, establishment_id)
@@ -60,9 +60,9 @@ async def create_review_endpoint(
 async def create_review_image_endpoint(
     review_id: int,
     request: ReviewImageCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
-) -> ReviewReply:
+) -> ReviewImage:
     review = await session.get(Review, review_id)
     if review is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reseña no encontrada")
@@ -75,7 +75,7 @@ async def create_review_image_endpoint(
 @router.post("/{review_id}/upload-url")
 async def generate_review_upload_url(
     review_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     review = await session.get(Review, review_id)
@@ -91,7 +91,7 @@ async def generate_review_upload_url(
 async def create_review_reply(
     review_id: int,
     request: ReviewReplyCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_active_user),
     session: AsyncSession = Depends(get_db),
 ) -> ReviewReply:
     review = await session.get(Review, review_id)

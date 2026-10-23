@@ -1,9 +1,13 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.establishment import Establishment
 
 
 class Review(Base):
@@ -29,7 +33,7 @@ class Review(Base):
     reply: Mapped["ReviewReply | None"] = relationship(
         back_populates="review", cascade="all, delete-orphan", lazy="selectin", uselist=False
     )
-    establishment: Mapped["Establishment"] = relationship(back_populates="reviews")
+    establishment: Mapped["Establishment"] = relationship("Establishment", back_populates="reviews")
 
 
 class ReviewImage(Base):

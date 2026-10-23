@@ -38,6 +38,51 @@ uvicorn app.main:app --reload
 
 La comprobacion inicial esta disponible en `http://localhost:8000/api/v1/health`.
 
+Para ejecutar las pruebas instala también las dependencias de desarrollo:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+### Google OAuth y OTP simulado
+
+Configura `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_REDIRECT_URI` en `.env`.
+La URI de redirección debe coincidir exactamente con la configurada en Google Cloud.
+El proveedor por defecto es `SMS_PROVIDER=mock`; el código OTP aparece únicamente en
+los logs locales del backend y no se devuelve en la respuesta HTTP.
+
+El flujo es:
+
+1. Solicitar `GET /api/v1/auth/google`.
+2. Abrir la `authorization_url` devuelta y completar Google.
+3. Google vuelve a `/api/v1/auth/google/callback`.
+4. Usar el `access_token` devuelto como Bearer token.
+5. Solicitar `POST /api/v1/auth/phone/send-code`.
+6. Leer el OTP en los logs locales y enviarlo a `POST /api/v1/auth/phone/verify`.
+
+Ejecuta las migraciones con:
+
+```bash
+python -m alembic upgrade head
+```
+
+Las rutas que crean o modifican establecimientos, reseñas y administración requieren
+un usuario `ACTIVE` con teléfono verificado. La sesión actual del proyecto sigue
+siendo JWT Bearer; el endpoint de logout devuelve `204` y el cliente debe descartar
+el token.
+
+El registro tradicional mediante `POST /api/v1/auth/register` solicita el número
+de teléfono y envía el OTP inmediatamente. Devuelve un JWT provisional para
+iniciar la sesión, pero el usuario debe confirmar el código antes de usar
+funciones protegidas. El OTP no se devuelve en la respuesta; con el proveedor
+`mock` aparece en los logs de Uvicorn.
+El login y el registro devuelven `registration_complete=false` y
+`requires_phone_verification=true` mientras el teléfono esté pendiente.
+
+El teléfono también puede actualizarse mediante `PATCH /api/v1/users/me`.
+Cambiarlo lo marca nuevamente como no verificado y exige repetir el flujo OTP.
+
 ## Estructura
 
 - `app/main.py`: punto de entrada de FastAPI.
@@ -65,7 +110,7 @@ DATABASE_URL=postgresql+asyncpg://planati:planati@localhost:5432/planati
 PostgreSQL usa los siguientes valores en el archivo Compose:
 
 - Host: `localhost`
-- Puerto: `5432`
+- Puerto: `5433`
 - Base: `planati`
 - Usuario: `planati`
 - Password: `planati`

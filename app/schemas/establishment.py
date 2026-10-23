@@ -24,10 +24,32 @@ class MenuItemInput(BaseModel):
     price: Decimal = Field(ge=0, decimal_places=2)
 
 
+class ComboItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    product_id: int
+    quantity: int
+    product_name: str | None = None
+
+
 class MenuItemResponse(MenuItemInput):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    image_url: str | None = None
+    is_combo: bool = False
+    is_available: bool = True
+    combo_items: list[ComboItemResponse] = Field(default_factory=list)
+
+
+class EstablishmentImageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    image_url: str
+    image_type: str
+    caption: str | None = None
+    display_order: int
 
 
 class EstablishmentCreate(BaseModel):
@@ -66,10 +88,28 @@ class EstablishmentResponse(BaseModel):
     latitude: Decimal | None
     longitude: Decimal | None
     price_range: str | None
+    status: str = "PENDING"
+    phone: str | None = None
+    contact_email: str | None = None
+    profile_image_url: str | None = None
+    banner_image_url: str | None = None
+    manager_name: str | None = None
     created_at: datetime
     schedules: list[ScheduleResponse] = Field(default_factory=list)
     menu_items: list[MenuItemResponse] = Field(default_factory=list)
+    images: list[EstablishmentImageResponse] = Field(default_factory=list)
     reviews: list[ReviewResponse] = Field(default_factory=list)
+
+
+class EstablishmentDetailResponse(EstablishmentResponse):
+    """Detalle público: catálogo separado y resumen de reseñas en solo lectura."""
+
+    products: list[MenuItemResponse] = Field(default_factory=list)
+    combos: list[MenuItemResponse] = Field(default_factory=list)
+    gallery_images: list[EstablishmentImageResponse] = Field(default_factory=list)
+    menu_images: list[EstablishmentImageResponse] = Field(default_factory=list)
+    reviews_count: int = 0
+    average_rating: float | None = None
 
 
 class EstablishmentNearbyResponse(EstablishmentResponse):

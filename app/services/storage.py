@@ -8,6 +8,15 @@ from fastapi import HTTPException, status
 
 from app.core.config import settings
 
+RESTAURANT_UPLOAD_FOLDERS = {"establishments", "menu", "products"}
+IMAGE_CONTENT_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+
 
 class R2StorageService:
     def __init__(self) -> None:
@@ -36,12 +45,22 @@ class R2StorageService:
                 detail="Cloudflare R2 no está configurado. Define las credenciales del bucket.",
             )
 
-        object_key = f"{folder}/{uuid4()}{file_extension}"
+        extension = file_extension.lower()
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        content_type = IMAGE_CONTENT_TYPES.get(extension)
+        if content_type is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Formato no permitido. Usa .jpg, .jpeg, .png o .webp.",
+            )
+
+        object_key = f"{folder}/{uuid4()}{extension}"
         try:
             client = self.get_client()
             upload_url = client.generate_presigned_url(
                 "put_object",
-                Params={"Bucket": self.bucket_name, "Key": object_key, "ContentType": "image/jpeg"},
+                Params={"Bucket": self.bucket_name, "Key": object_key, "ContentType": content_type},
                 ExpiresIn=600,
                 HttpMethod="PUT",
             )
@@ -59,3 +78,16 @@ storage_service = R2StorageService()
 
 def build_review_upload_url(file_extension: str = ".jpg") -> dict[str, str]:
     return storage_service.create_presigned_upload_url("reviews", file_extension)
+
+
+def build_restaurant_upload_url(folder: str, file_extension: str = ".jpg") -> dict[str, str]:
+    if folder not in RESTAURANT_UPLOAD_FOLDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Carpeta no permitida. Usa establishments, menu o products.",
+        )
+    return storage_service.create_presigned_upload_url(folder, file_extension)
+
+
+def build_avatar_upload_url(file_extension: str = ".jpg") -> dict[str, str]:
+    return storage_service.create_presigned_upload_url("avatars", file_extension)

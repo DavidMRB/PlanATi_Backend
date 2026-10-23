@@ -13,6 +13,7 @@ secrets*.json
 # Python
 .venv/
 venv/
+.vscode/
 __pycache__/
 *.py[cod]
 .pytest_cache/

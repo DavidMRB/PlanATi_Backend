@@ -4,7 +4,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.establishment import Establishment, MenuItem, Schedule
+from app.models.establishment import ComboItem, Establishment, MenuItem, Schedule
 from app.models.review import Review
 from app.schemas.establishment import EstablishmentCreate, EstablishmentUpdate
 
@@ -27,21 +27,28 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return radius_km * c
 
 
+_DETAIL_LOAD_OPTIONS = (
+    selectinload(Establishment.schedules),
+    selectinload(Establishment.menu_items).selectinload(MenuItem.combo_items).joinedload(ComboItem.product),
+    selectinload(Establishment.images),
+    selectinload(Establishment.reviews).selectinload(Review.images),
+    selectinload(Establishment.reviews).selectinload(Review.reply),
+)
+
+
 async def list_establishments(
     session: AsyncSession,
     search: str | None = None,
     category: str | None = None,
+    approved_only: bool = True,
 ) -> list[Establishment]:
     query = (
         select(Establishment)
-        .options(
-            selectinload(Establishment.schedules),
-            selectinload(Establishment.menu_items),
-            selectinload(Establishment.reviews).selectinload(Review.images),
-            selectinload(Establishment.reviews).selectinload(Review.reply),
-        )
+        .options(*_DETAIL_LOAD_OPTIONS)
         .order_by(Establishment.name)
     )
+    if approved_only:
+        query = query.where(Establishment.status == "APPROVED")
     if search:
         pattern = f"%{search.strip()}%"
         query = query.where(
@@ -57,12 +64,7 @@ async def get_establishment(session: AsyncSession, establishment_id: int) -> Est
     query = (
         select(Establishment)
         .where(Establishment.id == establishment_id)
-        .options(
-            selectinload(Establishment.schedules),
-            selectinload(Establishment.menu_items),
-            selectinload(Establishment.reviews).selectinload(Review.images),
-            selectinload(Establishment.reviews).selectinload(Review.reply),
-        )
+        .options(*_DETAIL_LOAD_OPTIONS)
     )
     result = await session.scalars(query)
     return result.first()
@@ -75,7 +77,7 @@ async def list_nearby_establishments(
     radius_km: float = 5.0,
     limit: int = 20,
 ) -> list[tuple[Establishment, float]]:
-    establishments = await list_establishments(session)
+    establishments = await list_establishments(session, approved_only=True)
     nearby: list[tuple[Establishment, float]] = []
 
     for establishment in establishments:
