@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field
 
+from app.schemas.privacy import ConsentAcceptance
 
-class RegisterRequest(BaseModel):
+
+class RegisterRequest(ConsentAcceptance):
     full_name: str = Field(min_length=2, max_length=120)
     nickname: str | None = Field(default=None, min_length=2, max_length=50)
     email: str = Field(min_length=5, max_length=255)
@@ -19,6 +21,13 @@ class AuthResponse(BaseModel):
     requires_phone_verification: bool
     role: str | None = None
     establishment_status: str | None = None
+    # Token CSRF de la sesión recién creada (no es el JWT y por sí solo no autentica).
+    # El frontend lo guarda en memoria y lo envía en la cabecera X-CSRF-Token.
+    csrf_token: str
+
+
+class CsrfTokenResponse(BaseModel):
+    csrf_token: str
 
 
 class TokenResponse(AuthResponse):

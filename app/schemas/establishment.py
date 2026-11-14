@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.review import ReviewResponse
+from app.schemas.review import MyReview, ReviewBlockReason, ReviewPublic
 
 
 class ScheduleInput(BaseModel):
@@ -76,7 +76,9 @@ class EstablishmentUpdate(BaseModel):
     menu_items: list[MenuItemInput] | None = None
 
 
-class EstablishmentResponse(BaseModel):
+class EstablishmentListItem(BaseModel):
+    """Elemento del directorio y de cercanos: sin reseñas; la puntuación llega ya agregada."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -95,22 +97,69 @@ class EstablishmentResponse(BaseModel):
     banner_image_url: str | None = None
     manager_name: str | None = None
     created_at: datetime
+    establishment_type: str = "RESTAURANT"
+    city: str | None = None
+    location_source: str | None = None
+    google_place_id: str | None = None
+    rating_avg: float | None = None
+    rating_count: int = 0
+    ranking_score: float | None = None
     schedules: list[ScheduleResponse] = Field(default_factory=list)
+    # Se conserva porque la página de inicio arma "experiencias" con los combos del listado.
+    # Pendiente: sustituirlo por un endpoint de combos destacados.
     menu_items: list[MenuItemResponse] = Field(default_factory=list)
     images: list[EstablishmentImageResponse] = Field(default_factory=list)
-    reviews: list[ReviewResponse] = Field(default_factory=list)
+
+
+class EstablishmentResponse(EstablishmentListItem):
+    """Perfil del establecimiento (panel del restaurante, alta y edición). Sin reseñas: se piden
+    paginadas en GET /reviews/establishments/{id}."""
 
 
 class EstablishmentDetailResponse(EstablishmentResponse):
-    """Detalle público: catálogo separado y resumen de reseñas en solo lectura."""
+    """Detalle público: catálogo separado y resumen de reseñas.
+
+    `reviews` ya no existe: llegan las 3 más recientes en `recent_reviews` y el resto en el
+    endpoint paginado de reseñas.
+    """
 
     products: list[MenuItemResponse] = Field(default_factory=list)
     combos: list[MenuItemResponse] = Field(default_factory=list)
     gallery_images: list[EstablishmentImageResponse] = Field(default_factory=list)
     menu_images: list[EstablishmentImageResponse] = Field(default_factory=list)
+    # Leen los agregados `rating_count` y `rating_avg` (solo reseñas visibles).
     reviews_count: int = 0
     average_rating: float | None = None
+    rating_distribution: dict[str, int] = Field(default_factory=lambda: {str(n): 0 for n in range(1, 6)})
+    # Puesto entre los aprobados de la misma categoría por ranking_score (1 = el mejor).
+    category_rank: int | None = None
+    recent_reviews: list[ReviewPublic] = Field(default_factory=list)
+    # Reseña del usuario que consulta, en cualquier estado (para que vea si fue ocultada o bloqueada).
+    viewer_review: MyReview | None = None
+    viewer_can_review: bool = False
+    viewer_review_block: ReviewBlockReason | None = None
+    # B7: si el usuario que consulta lo tiene en favoritos (false sin sesión).
+    is_favorite: bool = False
 
 
-class EstablishmentNearbyResponse(EstablishmentResponse):
+class EstablishmentNearbyItem(EstablishmentListItem):
     distance_km: float = Field(ge=0)
+
+
+class MapMarker(BaseModel):
+    id: int
+    name: str
+    category: str
+    establishment_type: str
+    latitude: Decimal
+    longitude: Decimal
+    rating_avg: float | None = None
+    rating_count: int = 0
+    price_range: str | None = None
+    profile_image_url: str | None = None
+
+
+class MapMarkersResponse(BaseModel):
+    items: list[MapMarker]
+    # True si en el área había más locales que `limit`: se devolvieron los mejor posicionados.
+    truncated: bool

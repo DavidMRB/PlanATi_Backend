@@ -2,7 +2,17 @@ import re
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.schemas.privacy import ConsentAcceptance
+from app.schemas.geo import (
+    EstablishmentType,
+    Latitude,
+    LocationSource,
+    Longitude,
+    check_coordinates_pair,
+    clean_optional_text,
+)
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 IMAGE_URL_PATTERN = r"^https?://\S+$"
@@ -29,7 +39,7 @@ def validate_strong_password(value: str) -> str:
     return value
 
 
-class RestaurantRegisterRequest(BaseModel):
+class RestaurantRegisterRequest(ConsentAcceptance):
     account_email: str = Field(min_length=5, max_length=255, pattern=EMAIL_PATTERN)
     password: str = Field(min_length=8, max_length=128)
     manager_name: str = Field(min_length=2, max_length=120)
@@ -41,9 +51,18 @@ class RestaurantRegisterRequest(BaseModel):
     description: str = Field(min_length=1)
     profile_image_url: str | None = Field(default=None, max_length=500, pattern=IMAGE_URL_PATTERN)
     banner_image_url: str | None = Field(default=None, max_length=500, pattern=IMAGE_URL_PATTERN)
+    # Ubicación obligatoria (decisión D3): sin ella el local no aparece en el mapa ni en cercanos.
+    # La geocodificación ocurre en el frontend; el backend valida y guarda.
+    latitude: Latitude
+    longitude: Longitude
+    location_source: LocationSource | None = None
+    google_place_id: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=80)
+    establishment_type: EstablishmentType = "RESTAURANT"
 
     _check_password = field_validator("password")(validate_strong_password)
     _check_phone = field_validator("establishment_phone")(normalize_establishment_phone)
+    _clean_text = field_validator("google_place_id", "city")(clean_optional_text)
 
 
 class RestaurantRegisterResponse(BaseModel):
@@ -52,6 +71,8 @@ class RestaurantRegisterResponse(BaseModel):
     role: str
     establishment_status: str
     message: str
+    # Token CSRF de la sesión creada con el registro (ver AuthResponse).
+    csrf_token: str
 
 
 class RestaurantStatusResponse(BaseModel):
@@ -61,6 +82,7 @@ class RestaurantStatusResponse(BaseModel):
     address: str
     status: str
     rejection_reason: str | None = None
+    suspension_reason: str | None = None
 
 
 class RestaurantProfileUpdate(BaseModel):
@@ -73,14 +95,32 @@ class RestaurantProfileUpdate(BaseModel):
     profile_image_url: str | None = Field(default=None, max_length=500, pattern=IMAGE_URL_PATTERN)
     banner_image_url: str | None = Field(default=None, max_length=500, pattern=IMAGE_URL_PATTERN)
     manager_name: str | None = Field(default=None, min_length=2, max_length=120)
-    latitude: Decimal | None = Field(default=None, ge=-90, le=90, decimal_places=6)
-    longitude: Decimal | None = Field(default=None, ge=-180, le=180, decimal_places=6)
+    latitude: Latitude | None = None
+    longitude: Longitude | None = None
+    location_source: LocationSource | None = None
+    google_place_id: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=80)
+    establishment_type: EstablishmentType | None = None
     price_range: str | None = Field(default=None, max_length=20)
+
+    _clean_text = field_validator("google_place_id", "city")(clean_optional_text)
 
     @field_validator("phone")
     @classmethod
     def _check_phone(cls, value: str | None) -> str | None:
         return normalize_establishment_phone(value) if value is not None else None
+
+    @field_validator("establishment_type")
+    @classmethod
+    def _type_not_null(cls, value: str | None) -> str | None:
+        if value is None:
+            raise ValueError("El tipo de establecimiento no puede quedar vacío.")
+        return value
+
+    @model_validator(mode="after")
+    def _check_location(self) -> "RestaurantProfileUpdate":
+        check_coordinates_pair(self)
+        return self
 
 
 class RestaurantReapplyResponse(BaseModel):

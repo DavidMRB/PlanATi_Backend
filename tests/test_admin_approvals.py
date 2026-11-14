@@ -43,12 +43,15 @@ def test_incompatible_transitions_return_conflict(register_restaurant, admin_cli
 
     assert admin_client.post(f"{API}/admin/establishments/{establishment_id}/approve").status_code == 200
     assert admin_client.post(f"{API}/admin/establishments/{establishment_id}/approve").status_code == 409
-
-    # Suspensión administrativa: APPROVED -> REJECTED.
-    assert admin_client.post(f"{API}/admin/establishments/{establishment_id}/reject", json=reason).status_code == 200
+    # Un local aprobado ya no se "rechaza": se suspende (B5).
     assert admin_client.post(f"{API}/admin/establishments/{establishment_id}/reject", json=reason).status_code == 409
+
+    _, other = register_restaurant("b")
+    other_id = other["establishment_id"]
+    assert admin_client.post(f"{API}/admin/establishments/{other_id}/reject", json=reason).status_code == 200
+    assert admin_client.post(f"{API}/admin/establishments/{other_id}/reject", json=reason).status_code == 409
     # Un rechazado debe re-aplicar antes de volver a ser aprobado.
-    assert admin_client.post(f"{API}/admin/establishments/{establishment_id}/approve").status_code == 409
+    assert admin_client.post(f"{API}/admin/establishments/{other_id}/approve").status_code == 409
 
     assert admin_client.post(f"{API}/admin/establishments/9999/approve").status_code == 404
 

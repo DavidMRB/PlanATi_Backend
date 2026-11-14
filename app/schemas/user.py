@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +18,8 @@ class UserResponse(BaseModel):
     phone_verified: bool
     status: str
     created_at: datetime
+    # Documentos legales cuya versión vigente falta aceptar (B8); vacío = al día.
+    pending_consents: list[Literal["PRIVACY_POLICY", "TERMS"]] = []
 
 
 class UserUpdate(BaseModel):
