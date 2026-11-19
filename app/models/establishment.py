@@ -2,7 +2,20 @@ from datetime import datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Time,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -11,12 +24,25 @@ if TYPE_CHECKING:
     from app.models.review import Review
     from app.models.user import User
 
-ESTABLISHMENT_STATUSES = {"PENDING", "APPROVED", "REJECTED"}
+# REJECTED = solicitud rechazada (puede re-aplicar); SUSPENDED = sanción a un local ya aprobado.
+ESTABLISHMENT_STATUSES = {"PENDING", "APPROVED", "REJECTED", "SUSPENDED"}
 IMAGE_TYPES = {"GALLERY", "MENU"}
+# Cómo se obtuvo la ubicación: GPS del navegador, dirección de Google Places, pin en el mapa o a mano.
+LOCATION_SOURCES = {"GPS", "ADDRESS", "MAP_PIN", "MANUAL"}
+# La plataforma no solo tiene restaurantes; `category` sigue siendo texto libre dentro de un tipo.
+ESTABLISHMENT_TYPES = {"RESTAURANT", "CAFE", "BAR", "HOTEL", "EXPERIENCE", "STORE", "OTHER"}
+
+
+def _initial_ranking_score() -> float:
+    # Un local sin reseñas parte del valor previo del ranking bayesiano (no queda enterrado).
+    from app.services.rating_service import bayesian_score
+
+    return bayesian_score(0, 0)
 
 
 class Establishment(Base):
     __tablename__ = "establishments"
+    __table_args__ = (Index("ix_establishments_lat_lng", "latitude", "longitude"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -29,12 +55,28 @@ class Establishment(Base):
     price_range: Mapped[str | None] = mapped_column(String(20), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True, nullable=False)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suspension_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Nullable en base de datos para conservar establecimientos previos; el registro de restaurante los exige.
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     profile_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     banner_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     manager_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Ubicación (fase 2). latitude/longitude siguen siendo la fuente de verdad.
+    location_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    google_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    establishment_type: Mapped[str] = mapped_column(
+        String(30), default="RESTAURANT", server_default="RESTAURANT", nullable=False, index=True
+    )
+    # Agregados de puntuación, recalculados en la misma transacción de cada cambio de reseña
+    # (app/services/rating_service.py). Evitan cargar reseñas en el directorio y el mapa.
+    rating_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    rating_sum: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    rating_avg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ranking_score: Mapped[float | None] = mapped_column(
+        Float, default=_initial_ranking_score, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -49,8 +91,10 @@ class Establishment(Base):
     menu_items: Mapped[list["MenuItem"]] = relationship(
         back_populates="establishment", cascade="all, delete-orphan", lazy="selectin"
     )
+    # lazy="raise": ningún listado, perfil ni detalle carga todas las reseñas; se piden paginadas
+    # (GET /reviews/establishments/{id}). passive_deletes: las borra el ON DELETE CASCADE.
     reviews: Mapped[list["Review"]] = relationship(
-        back_populates="establishment", cascade="all, delete-orphan", lazy="selectin"
+        back_populates="establishment", cascade="all, delete-orphan", passive_deletes=True, lazy="raise"
     )
     images: Mapped[list["EstablishmentImage"]] = relationship(
         back_populates="establishment",

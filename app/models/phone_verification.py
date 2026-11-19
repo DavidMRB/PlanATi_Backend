@@ -9,6 +9,9 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.user import User
 
+# VERIFY_PHONE: verificar o cambiar el teléfono; DELETE_ACCOUNT: confirmar la eliminación de la cuenta (B8).
+CODE_PURPOSES = {"VERIFY_PHONE", "DELETE_ACCOUNT"}
+
 
 class PhoneVerificationCode(Base):
     __tablename__ = "phone_verification_codes"
@@ -18,6 +21,9 @@ class PhoneVerificationCode(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    purpose: Mapped[str] = mapped_column(
+        String(20), default="VERIFY_PHONE", server_default="VERIFY_PHONE", nullable=False
+    )
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

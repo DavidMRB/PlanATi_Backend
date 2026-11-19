@@ -176,20 +176,65 @@ temporalmente `Authorization: Bearer` como alternativa, pero debe definirse
 una fecha o versión para retirarlo. No devolver el token de la cookie a una
 ruta del frontend.
 
-### 7. CORS y CSRF
+### 7. CORS y CSRF (implementado en la fase 2, B0)
 
-`app/main.py` ya habilita `allow_credentials=True`. Mantener orígenes explícitos
-en `CORS_ORIGINS`; no combinar credenciales con `allow_origins=["*"]`.
+`app/main.py` habilita `allow_credentials=True` con orígenes explícitos en
+`CORS_ORIGINS` (nunca `*`); en producción también lista métodos y cabeceras
+(`Content-Type`, `X-CSRF-Token`, `Authorization`). Como el navegador envía la
+cookie de sesión automáticamente, CORS no basta: la protección CSRF está en
+`app/core/csrf.py` como dependencia global (`FastAPI(dependencies=[Depends(csrf_protect)])`)
+y tiene dos capas.
 
-Como las cookies se envían automáticamente, CORS por sí solo no es una
-protección CSRF. Para las rutas que cambian estado:
+**Capa 1 — verificación de origen** (todas las peticiones `POST`, `PUT`, `PATCH`, `DELETE`):
 
-- Validar el encabezado `Origin` contra los orígenes permitidos y/o usar un
-  token CSRF sincronizado o double-submit.
-- No permitir mutaciones mediante `GET`.
-- Mantener `SameSite` en el valor más restrictivo compatible con el despliegue.
-- Aplicar esta protección también a login/logout si el diseño de sesión lo
-  requiere.
+| Caso | Resultado |
+|---|---|
+| Trae `Authorization: Bearer …` (con credenciales) | Exenta: el navegador no añade esa cabecera por su cuenta. |
+| Trae `Origin` | Debe estar en `CSRF_TRUSTED_ORIGINS` (vacío = `CORS_ORIGINS` + `FRONTEND_URL`); si no, 403. `Origin: null` siempre se rechaza. |
+| Sin `Origin`, con `Referer` | Se compara el origen del `Referer`. |
+| Sin ninguno de los dos | Se rechaza solo si trae la cookie de sesión (`curl` sin cookie sigue funcionando). |
+
+Aplica también a login, registros y canje de Google para evitar el "login CSRF".
+
+**Capa 2 — token por sesión** (peticiones que cambian estado autenticadas por cookie):
+
+- El JWT de la cookie lleva los claims `iat` y `csrf` (`secrets.token_urlsafe(32)`).
+- Login, registro, registro de restaurante y canje de Google devuelven ese valor en
+  `csrf_token` (no es el JWT y por sí solo no autentica). El frontend lo guarda **solo
+  en memoria** y lo envía en la cabecera `X-CSRF-Token`.
+- `GET /api/v1/auth/csrf` devuelve `{"csrf_token": "…"}` leyendo el claim de la cookie
+  (`Cache-Control: no-store`); el frontend lo usa al recargar la página. Sin sesión → 401.
+  Otro sitio no puede leer esa respuesta porque CORS solo la expone a los orígenes permitidos.
+- La cabecera se compara con `secrets.compare_digest`. Exentas del token (no del
+  origen): login, registros, canje de Google y logout (`TOKEN_EXEMPT_PATHS`).
+- El token cambia en cada inicio de sesión y caduca con el JWT. Va dentro del JWT y no
+  en una segunda cookie para que funcione aunque frontend y API estén en subdominios
+  distintos y sin guardar estado en el servidor.
+- Una cookie vencida o inválida no concede permisos: la petición sigue y la ruta
+  responde 401 si exige sesión. Una sesión válida emitida antes de activar CSRF (sin
+  claim) se rechaza; el usuario vuelve a iniciar sesión.
+
+Error común (403):
+
+```json
+{"detail": "La solicitud fue rechazada por seguridad. Recarga la página e inténtalo de nuevo.", "code": "CSRF_FAILED"}
+```
+
+El frontend, ante `CSRF_FAILED`, pide un token nuevo con `GET /auth/csrf` y reintenta
+una sola vez.
+
+Reglas complementarias:
+
+- Ninguna ruta `GET` cambia estado (auditado: solo `/auth/google` fija la cookie
+  `oauth_state` y `/auth/google/callback` completa el login, ambos protegidos por `state`).
+- La cookie usa `SameSite=Lax`; `Strict` no se usa porque quien llega desde un enlace
+  externo aparecería sin sesión en la primera navegación.
+- Los atributos de la cookie salen de `session_cookie_params()` en
+  `app/core/security.py`, que usan `set_auth_cookie`, `clear_auth_cookie` (el borrado
+  repite los mismos atributos) y la cookie `oauth_state`. En producción `Secure` es
+  obligatorio. `ACCESS_TOKEN_COOKIE_DOMAIN` solo se usa si la API va en otro subdominio.
+- Pruebas: `tests/test_csrf.py` y `tests/test_cookies.py`. En las demás pruebas,
+  `make_client()` envía `Origin` de confianza y copia `csrf_token` a `X-CSRF-Token`.
 
 ## Cambios en el frontend
 
@@ -280,7 +325,7 @@ cookies con los dominios reales, no solo con localhost.
 - Dos canjes concurrentes del mismo código producen como máximo una sesión.
 - La cookie OAuth `oauth_state` se valida y se elimina al terminar.
 - CORS permite credenciales solo desde los orígenes configurados.
-- Las solicitudes de mutación sin protección CSRF válida se rechazan.
+- Las solicitudes de mutación sin protección CSRF válida se rechazan (`tests/test_csrf.py`).
 
 ### Frontend
 

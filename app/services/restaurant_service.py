@@ -5,7 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.establishment import ComboItem, Establishment, EstablishmentImage, MenuItem
+from app.models.notification import NotificationType
 from app.models.user import User
+from app.services.establishment_service import ensure_in_service_area
+from app.services.notification_service import notify
 
 
 class EstablishmentTransitionError(Exception):
@@ -30,9 +33,14 @@ async def list_establishments_for_admin(
     skip: int,
     limit: int,
 ) -> list[tuple[Establishment, User]]:
-    query = select(Establishment, User).join(User, Establishment.owner_id == User.id)
+    from app.services.admin_service import establishment_open_reports_expr
+
+    query = select(Establishment, User, establishment_open_reports_expr()).join(
+        User, Establishment.owner_id == User.id
+    )
     if status_filter != "ALL":
         query = query.where(Establishment.status == status_filter)
+    # GUIA #8 TEMA: Vectores (ordenamiento y búsqueda) -> búsqueda por atributo (nombre, categoría o correo del dueño) sin importar mayúsculas.
     if search:
         pattern = f"%{search.strip()}%"
         query = query.where(
@@ -42,9 +50,10 @@ async def list_establishments_for_admin(
                 User.email.ilike(pattern),
             )
         )
+    # GUIA #8 TEMA: Vectores (ordenamiento y búsqueda) -> ordenamiento descendente: las solicitudes más recientes primero.
     query = query.order_by(Establishment.created_at.desc(), Establishment.id.desc()).offset(skip).limit(limit)
     result = await session.execute(query)
-    return [(establishment, owner) for establishment, owner in result.all()]
+    return [(establishment, owner, int(reports or 0)) for establishment, owner, reports in result.all()]
 
 
 async def get_establishment_with_owner(
@@ -68,6 +77,15 @@ async def approve_establishment(session: AsyncSession, establishment: Establishm
         )
     establishment.status = "APPROVED"
     establishment.rejection_reason = None
+    await notify(
+        session,
+        establishment.owner_id,
+        NotificationType.ESTABLISHMENT_APPROVED,
+        "¡Tu establecimiento fue aprobado!",
+        f"{establishment.name} ya es visible en PlanATi. Completa tu perfil, tu menú y tus fotos para atraer más visitas.",
+        link="/restaurant/dashboard",
+        data={"establishment_id": establishment.id},
+    )
     await session.commit()
     await session.refresh(establishment)
     return establishment
@@ -78,9 +96,23 @@ async def reject_establishment(
 ) -> Establishment:
     if establishment.status == "REJECTED":
         raise EstablishmentTransitionError("El establecimiento ya está rechazado")
-    # PENDING -> REJECTED (rechazo) y APPROVED -> REJECTED (suspensión administrativa).
+    # Solo PENDING -> REJECTED. Sancionar un local aprobado es suspenderlo (SUSPENDED), no rechazarlo.
+    if establishment.status != "PENDING":
+        raise EstablishmentTransitionError(
+            "Solo se pueden rechazar solicitudes en estado PENDING; para un local aprobado usa suspender"
+        )
     establishment.status = "REJECTED"
     establishment.rejection_reason = reason.strip()
+    await notify(
+        session,
+        establishment.owner_id,
+        NotificationType.ESTABLISHMENT_REJECTED,
+        "Tu solicitud de registro fue rechazada",
+        f"Motivo: {establishment.rejection_reason.rstrip('.')}. Corrige los datos de {establishment.name} "
+        "y vuelve a enviar la solicitud desde tu panel.",
+        link="/restaurant/status",
+        data={"establishment_id": establishment.id},
+    )
     await session.commit()
     await session.refresh(establishment)
     return establishment
@@ -92,6 +124,7 @@ async def reject_establishment(
 async def update_establishment_profile(
     session: AsyncSession, establishment: Establishment, changes: dict[str, Any]
 ) -> Establishment:
+    ensure_in_service_area(changes.get("latitude"), changes.get("longitude"))
     for field, value in changes.items():
         setattr(establishment, field, value)
     await session.commit()
@@ -104,6 +137,7 @@ async def reapply_establishment(
 ) -> Establishment:
     if establishment.status != "REJECTED":
         raise EstablishmentTransitionError("Solo un establecimiento rechazado puede volver a postularse")
+    ensure_in_service_area(changes.get("latitude"), changes.get("longitude"))
     for field, value in changes.items():
         setattr(establishment, field, value)
     establishment.status = "PENDING"

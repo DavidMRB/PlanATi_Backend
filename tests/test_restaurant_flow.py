@@ -45,7 +45,10 @@ def test_login_returns_role_and_establishment_status(make_client, register_resta
         json={"email": "gerencia-a@restaurante.com", "password": DEFAULT_PASSWORD},
     )
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    # El token CSRF de la sesión acompaña la respuesta (fase 2, B0); su valor es aleatorio.
+    assert isinstance(body.pop("csrf_token"), str)
+    assert body == {
         "registration_complete": True,
         "requires_phone_verification": False,
         "role": "restaurant",

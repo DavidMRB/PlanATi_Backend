@@ -23,3 +23,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Copias de seguridad locales de la base (pueden contener datos personales)
+backups/

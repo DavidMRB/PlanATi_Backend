@@ -1,29 +1,31 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_db, require_approved_restaurant, require_restaurant_user
-from app.models.establishment import Establishment, EstablishmentImage, MenuItem
+from app.api.dependencies import (
+    EstablishmentAccessError,
+    get_db,
+    require_approved_restaurant,
+    require_restaurant_user,
+)
+from app.api.routes.catalog_router import build_catalog_router
+from app.models.establishment import Establishment
 from app.models.user import User
-from app.schemas.establishment import EstablishmentImageResponse, EstablishmentResponse, MenuItemResponse
+from app.schemas.common import Page
+from app.schemas.establishment import EstablishmentResponse
 from app.schemas.restaurant import (
-    ComboCreate,
-    ComboUpdate,
-    EstablishmentImageCreate,
-    ProductCreate,
-    ProductUpdate,
     RestaurantProfileUpdate,
     RestaurantReapplyResponse,
     RestaurantStatusResponse,
     UploadUrlResponse,
 )
-from app.services import restaurant_service
-from app.services.restaurant_service import (
-    CatalogConflictError,
-    CatalogValidationError,
-    EstablishmentTransitionError,
-)
+from app.schemas.review import ReviewPublic, ReviewReplyCreate, RestaurantReviewSummary
+from app.services import restaurant_service, review_service
+from app.services.rating_service import category_rank, rating_distribution
+from app.services.review_service import ReplyFilter, to_public_review
+from app.services.establishment_service import OutOfServiceAreaError
+from app.services.restaurant_service import EstablishmentTransitionError
 from app.services.storage import build_restaurant_upload_url
 
 router = APIRouter(prefix="/restaurant", tags=["restaurant"])
@@ -46,6 +48,7 @@ async def get_restaurant_status(
         address=establishment.address,
         status=establishment.status,
         rejection_reason=establishment.rejection_reason,
+        suspension_reason=establishment.suspension_reason,
     )
 
 
@@ -62,6 +65,8 @@ async def reapply_restaurant(
         )
     except EstablishmentTransitionError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except OutOfServiceAreaError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     return RestaurantReapplyResponse(
         establishment_id=establishment.id,
         status=establishment.status,
@@ -100,142 +105,80 @@ async def update_restaurant_profile(
 ) -> Establishment:
     changes = data.model_dump(exclude_unset=True)
     establishment = context[1]
+    if establishment.status == "SUSPENDED":
+        raise EstablishmentAccessError(establishment.status)
     # Mientras la solicitud está en revisión solo se permiten las imágenes del alta; el resto requiere APPROVED.
     if establishment.status != "APPROVED" and not set(changes) <= IMAGE_PROFILE_FIELDS:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Solo puedes actualizar las imágenes mientras tu establecimiento está en revisión.",
         )
-    return await restaurant_service.update_establishment_profile(session, establishment, changes)
+    try:
+        return await restaurant_service.update_establishment_profile(session, establishment, changes)
+    except OutOfServiceAreaError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
 
-# --- Imágenes: galería y menú físico ---------------------------------------------------------
+# --- Reseñas y respuestas (fase 2, B4) ---------------------------------------------------------
 
 
-@router.get("/images", response_model=list[EstablishmentImageResponse])
-async def list_restaurant_images(
-    image_type: Literal["GALLERY", "MENU"] | None = Query(default=None),
+@router.get("/reviews", response_model=Page[ReviewPublic])
+async def list_restaurant_reviews(
+    status_filter: ReplyFilter = Query(default="all", alias="status"),
+    rating: int | None = Query(default=None, ge=1, le=5),
+    sort: Literal["recent", "rating_asc"] = Query(default="recent"),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=50),
     context: RestaurantContext = Depends(require_approved_restaurant),
     session: AsyncSession = Depends(get_db),
-) -> list[EstablishmentImage]:
-    return await restaurant_service.list_establishment_images(session, context[1], image_type)
+) -> Page[ReviewPublic]:
+    """Reseñas visibles de mi establecimiento. Un comentario bloqueado llega como aviso, sin su texto."""
+    reviews, total = await review_service.list_reviews_for_owner(
+        session, context[1], reply_status=status_filter, rating=rating, sort=sort, skip=skip, limit=limit
+    )
+    return Page[ReviewPublic](items=[to_public_review(r) for r in reviews], total=total, skip=skip, limit=limit)
 
 
-@router.post("/images", response_model=EstablishmentImageResponse, status_code=status.HTTP_201_CREATED)
-async def create_restaurant_image(
-    data: EstablishmentImageCreate,
+@router.get("/reviews/summary", response_model=RestaurantReviewSummary)
+async def get_restaurant_review_summary(
     context: RestaurantContext = Depends(require_approved_restaurant),
     session: AsyncSession = Depends(get_db),
-) -> EstablishmentImage:
-    return await restaurant_service.add_establishment_image(session, context[1], data.model_dump())
-
-
-@router.delete("/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_restaurant_image(
-    image_id: int,
-    context: RestaurantContext = Depends(require_approved_restaurant),
-    session: AsyncSession = Depends(get_db),
-) -> None:
-    if not await restaurant_service.delete_establishment_image(session, context[1], image_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Imagen no encontrada")
-
-
-# --- Catálogo: productos ---------------------------------------------------------------------
-
-
-async def _get_item_or_404(
-    session: AsyncSession, establishment: Establishment, item_id: int, *, is_combo: bool
-) -> MenuItem:
-    item = await restaurant_service.get_catalog_item(session, establishment, item_id, is_combo=is_combo)
-    if item is None:
-        detail = "Combo no encontrado" if is_combo else "Producto no encontrado"
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
-    return item
-
-
-@router.get("/products", response_model=list[MenuItemResponse])
-async def list_restaurant_products(
-    context: RestaurantContext = Depends(require_approved_restaurant),
-    session: AsyncSession = Depends(get_db),
-) -> list[MenuItem]:
-    return await restaurant_service.list_catalog(session, context[1])
-
-
-@router.post("/products", response_model=MenuItemResponse, status_code=status.HTTP_201_CREATED)
-async def create_restaurant_product(
-    data: ProductCreate,
-    context: RestaurantContext = Depends(require_approved_restaurant),
-    session: AsyncSession = Depends(get_db),
-) -> MenuItem:
-    return await restaurant_service.create_product(session, context[1], data.model_dump())
-
-
-@router.patch("/products/{product_id}", response_model=MenuItemResponse)
-async def update_restaurant_product(
-    product_id: int,
-    data: ProductUpdate,
-    context: RestaurantContext = Depends(require_approved_restaurant),
-    session: AsyncSession = Depends(get_db),
-) -> MenuItem:
+) -> RestaurantReviewSummary:
     establishment = context[1]
-    product = await _get_item_or_404(session, establishment, product_id, is_combo=False)
-    return await restaurant_service.update_catalog_item(
-        session, establishment, product, data.model_dump(exclude_unset=True)
+    unanswered, response_rate = await review_service.reply_stats(session, establishment.id)
+    return RestaurantReviewSummary(
+        rating_avg=establishment.rating_avg,
+        rating_count=establishment.rating_count,
+        ranking_score=establishment.ranking_score,
+        category_rank=await category_rank(session, establishment),
+        distribution=await rating_distribution(session, establishment.id),
+        unanswered_count=unanswered,
+        response_rate=response_rate,
     )
 
 
-@router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_restaurant_product(
-    product_id: int,
+@router.put("/reviews/{review_id}/reply", response_model=ReviewPublic)
+async def upsert_restaurant_review_reply(
+    review_id: int,
+    data: ReviewReplyCreate,
     context: RestaurantContext = Depends(require_approved_restaurant),
     session: AsyncSession = Depends(get_db),
-) -> None:
-    product = await _get_item_or_404(session, context[1], product_id, is_combo=False)
-    try:
-        await restaurant_service.delete_product(session, product)
-    except CatalogConflictError as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+) -> ReviewPublic:
+    """Crea o actualiza la respuesta (idempotente). El autor recibe una notificación solo al crearla."""
+    review, _ = await review_service.upsert_reply(session, context[1], review_id, data.comment)
+    return to_public_review(review)
 
 
-# --- Catálogo: combos ------------------------------------------------------------------------
-
-
-@router.post("/combos", response_model=MenuItemResponse, status_code=status.HTTP_201_CREATED)
-async def create_restaurant_combo(
-    data: ComboCreate,
+@router.delete("/reviews/{review_id}/reply", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_restaurant_review_reply(
+    review_id: int,
     context: RestaurantContext = Depends(require_approved_restaurant),
     session: AsyncSession = Depends(get_db),
-) -> MenuItem:
-    try:
-        return await restaurant_service.create_combo(session, context[1], data.model_dump())
-    except CatalogValidationError as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+) -> Response:
+    await review_service.delete_reply(session, context[1], review_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.patch("/combos/{combo_id}", response_model=MenuItemResponse)
-async def update_restaurant_combo(
-    combo_id: int,
-    data: ComboUpdate,
-    context: RestaurantContext = Depends(require_approved_restaurant),
-    session: AsyncSession = Depends(get_db),
-) -> MenuItem:
-    establishment = context[1]
-    combo = await _get_item_or_404(session, establishment, combo_id, is_combo=True)
-    # exclude_unset también omitiría el quantity por defecto de cada ítem; se serializan completos.
-    changes = data.model_dump(exclude_unset=True, exclude={"items"})
-    if data.items is not None:
-        changes["items"] = [item.model_dump() for item in data.items]
-    try:
-        return await restaurant_service.update_combo(session, establishment, combo, changes)
-    except CatalogValidationError as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+# --- Imágenes, productos, combos y horarios (compartidos con /admin/establishments/{id}) --------
 
-
-@router.delete("/combos/{combo_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_restaurant_combo(
-    combo_id: int,
-    context: RestaurantContext = Depends(require_approved_restaurant),
-    session: AsyncSession = Depends(get_db),
-) -> None:
-    combo = await _get_item_or_404(session, context[1], combo_id, is_combo=True)
-    await restaurant_service.delete_combo(session, combo)
+router.include_router(build_catalog_router(require_approved_restaurant, audit=False))

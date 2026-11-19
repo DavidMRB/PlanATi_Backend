@@ -1,6 +1,10 @@
+# Servicio de autenticación: registro de usuarios y restaurantes, inicio de sesión (correo/contraseña
+# y Google) y emisión del token de sesión.
+# GUIA #10 TEMA: Subalgoritmos (funciones, procedimientos y modularización) -> cada paso del flujo es una función reutilizada por las rutas de app/api/routes/auth.py.
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,9 +14,20 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.establishment import Establishment
 from app.models.oauth_login_code import OAuthLoginCode
 from app.models.user import User
+from app.services.establishment_service import ensure_in_service_area
 from app.services.phone_verification_service import normalize_colombian_phone
+from app.services.privacy_service import record_consents
 
 
+class ConsentContext:
+    """Datos de la aceptación hecha en el formulario de registro (prueba de la autorización)."""
+
+    def __init__(self, *, ip_address: str | None, user_agent: str | None) -> None:
+        self.ip_address = ip_address
+        self.user_agent = user_agent
+
+
+# Registro de un usuario: valida que el correo y el teléfono no estén repetidos y guarda la contraseña con hash.
 async def register_user(
     session: AsyncSession,
     full_name: str,
@@ -20,7 +35,10 @@ async def register_user(
     email: str,
     password: str,
     phone_number: str,
+    consent: ConsentContext | None = None,
 ) -> User:
+    # GUIA #7 TEMA: Cadenas, listas, tuplas y diccionarios -> `strip().lower()` normaliza el correo: 'Laura@Correo.COM' y
+    # 'laura@correo.com' son el mismo usuario.
     normalized_email = email.strip().lower()
     normalized_phone = normalize_colombian_phone(phone_number)
     existing_user = await session.scalar(select(User).where(User.email == normalized_email))
@@ -40,11 +58,18 @@ async def register_user(
         status="PENDING_PHONE",
     )
     session.add(user)
+    if consent is not None:
+        # Versiones ya validadas por la ruta; la aceptación queda en la misma transacción que la cuenta.
+        await session.flush()
+        record_consents(
+            session, user, "WEB_REGISTER", ip_address=consent.ip_address, user_agent=consent.user_agent
+        )
     await session.commit()
     await session.refresh(user)
     return user
 
 
+# Registro de un restaurante: crea la cuenta y su establecimiento en estado PENDING (espera aprobación).
 async def register_restaurant(
     session: AsyncSession,
     *,
@@ -59,7 +84,16 @@ async def register_restaurant(
     description: str,
     profile_image_url: str | None,
     banner_image_url: str | None,
+    latitude: Decimal,
+    longitude: Decimal,
+    location_source: str | None = None,
+    google_place_id: str | None = None,
+    city: str | None = None,
+    establishment_type: str = "RESTAURANT",
+    consent: ConsentContext | None = None,
 ) -> tuple[User, Establishment]:
+    # Lanza OutOfServiceAreaError (400) antes de tocar la base de datos.
+    ensure_in_service_area(latitude, longitude)
     normalized_email = account_email.strip().lower()
     existing_user = await session.scalar(select(User).where(User.email == normalized_email))
     if existing_user is not None:
@@ -85,9 +119,20 @@ async def register_restaurant(
         manager_name=manager_name.strip(),
         profile_image_url=profile_image_url,
         banner_image_url=banner_image_url,
+        latitude=latitude,
+        longitude=longitude,
+        location_source=location_source,
+        google_place_id=google_place_id,
+        city=city,
+        establishment_type=establishment_type,
         status="PENDING",
     )
     session.add_all([user, establishment])
+    if consent is not None:
+        await session.flush()
+        record_consents(
+            session, user, "RESTAURANT_REGISTER", ip_address=consent.ip_address, user_agent=consent.user_agent
+        )
     await session.commit()
     await session.refresh(user)
     await session.refresh(establishment)
@@ -102,6 +147,7 @@ async def get_owned_establishment_status(session: AsyncSession, user: User) -> s
     )
 
 
+# Inicio de sesión con correo y contraseña (verifica el hash Argon2).
 async def authenticate_user(
     session: AsyncSession,
     email: str,
@@ -114,8 +160,8 @@ async def authenticate_user(
     return user
 
 
-def issue_access_token(user: User) -> str:
-    return create_access_token(str(user.id))
+def issue_access_token(user: User, *, csrf_token: str | None = None) -> str:
+    return create_access_token(str(user.id), csrf_token=csrf_token)
 
 
 async def issue_oauth_login_code(session: AsyncSession, user: User) -> str:
@@ -155,6 +201,7 @@ async def consume_oauth_login_code(session: AsyncSession, raw_code: str) -> User
     return user
 
 
+# Inicio de sesión con Google: busca o crea la cuenta asociada al correo de Google.
 async def authenticate_google_user(
     session: AsyncSession, identity: dict[str, str | bool | None]
 ) -> tuple[User, str]:
