@@ -2,7 +2,7 @@ from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.models.establishment import ComboItem, Establishment, EstablishmentImage, MenuItem
 from app.models.notification import NotificationType
@@ -31,12 +31,14 @@ async def list_establishments_for_admin(
     status_filter: str,
     search: str | None,
     skip: int,
-    limit: int,
-) -> list[tuple[Establishment, User]]:
+    limit: int | None,
+) -> list[tuple[Establishment, User, int]]:
     from app.services.admin_service import establishment_open_reports_expr
 
-    query = select(Establishment, User, establishment_open_reports_expr()).join(
-        User, Establishment.owner_id == User.id
+    query = (
+        select(Establishment, User, establishment_open_reports_expr())
+        .join(User, Establishment.owner_id == User.id)
+        .options(noload(Establishment.schedules), noload(Establishment.menu_items), noload(Establishment.images))
     )
     if status_filter != "ALL":
         query = query.where(Establishment.status == status_filter)

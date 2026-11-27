@@ -114,6 +114,8 @@ async def _approved_establishment(session: AsyncSession, establishment_id: int) 
     return establishment
 
 
+# GUIA 5 TEMA: Calcular un valor y generar resultado -> devuelve los ítems y el total según precio y cantidad.
+# GUIA 2 TEMA: Alternativa a float para dinero -> Decimal conserva la precisión decimal de los precios.
 async def _build_items(
     session: AsyncSession, establishment: Establishment, items: Sequence[PlanItemInput]
 ) -> tuple[list[PlanItem], Decimal]:
@@ -228,6 +230,7 @@ async def update_plan(
         )
 
     scheduled_at = ensure_utc(plan.scheduled_at)
+    # GUIA 3 TEMA: Condiciones anidadas -> si llega la fecha, valida ventana y horario solo cuando cambia.
     if "scheduled_at" in changes:
         scheduled_at = normalize_scheduled_at(changes["scheduled_at"])
         if scheduled_at != ensure_utc(plan.scheduled_at):
@@ -259,6 +262,7 @@ async def update_plan(
     return await get_own_plan(session, user, plan.id)
 
 
+# GUIA 5 TEMA: Realizar una operación -> comprueba el plan y confirma su cancelación.
 async def cancel_plan(session: AsyncSession, user: User, plan_id: int, *, now: datetime | None = None) -> Plan:
     now = ensure_utc(now or utcnow())
     plan = await get_own_plan(session, user, plan_id)

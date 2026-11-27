@@ -3,9 +3,10 @@ el establecimiento). Usuarios en `admin_users.py`; reseñas, reportes y bitácor
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import get_db, get_establishment_for_admin, require_admin
 from app.api.routes.catalog_router import build_catalog_router
@@ -24,6 +25,7 @@ from app.schemas.admin import (
 from app.schemas.establishment import EstablishmentResponse
 from app.schemas.restaurant import UploadUrlResponse
 from app.services import admin_service, moderation_service
+from app.services.excel_service import XLSX_RESPONSE, establishments_workbook, export_menu, export_reviews
 from app.services.establishment_service import OutOfServiceAreaError
 from app.services.restaurant_service import (
     EstablishmentTransitionError,
@@ -105,6 +107,38 @@ async def list_establishments_admin(
     # GUIA #6 TEMA: Ciclos -> comprensión de lista que recorre las filas;
     # GUIA #7 TEMA: Cadenas, listas, tuplas y diccionarios -> cada fila es una tupla que se desempaqueta en (establecimiento, dueño, reportes).
     return [_list_item(establishment, owner, reports) for establishment, owner, reports in rows]
+
+
+# GUIA 11 TEMA: Permisos y filtros -> solo el administrador exporta el directorio completo filtrado.
+@router.get("/exports/establishments.xlsx", response_class=Response, responses=XLSX_RESPONSE)
+async def export_admin_establishments(
+    status_filter: Literal["PENDING", "APPROVED", "REJECTED", "SUSPENDED", "ALL"] = Query(
+        default="ALL", alias="status"
+    ),
+    search: str | None = Query(default=None, max_length=150),
+    session: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> Response:
+    rows = await list_establishments_for_admin(session, status_filter, search, skip=0, limit=None)
+    return await run_in_threadpool(establishments_workbook, rows)
+
+
+# GUIA 11 TEMA: Exportación por establecimiento -> usa el contexto autorizado del administrador.
+@router.get("/establishments/{establishment_id}/exports/menu.xlsx", response_class=Response, responses=XLSX_RESPONSE)
+async def export_admin_establishment_menu(
+    context: AdminEstablishment = Depends(get_establishment_for_admin),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    return await export_menu(session, context[1])
+
+
+# GUIA 11 TEMA: Exportar reseñas -> descarga las reseñas visibles del establecimiento seleccionado.
+@router.get("/establishments/{establishment_id}/exports/reviews.xlsx", response_class=Response, responses=XLSX_RESPONSE)
+async def export_admin_establishment_reviews(
+    context: AdminEstablishment = Depends(get_establishment_for_admin),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    return await export_reviews(session, context[1])
 
 
 @router.get("/establishments/{establishment_id}", response_model=AdminEstablishmentDetail)

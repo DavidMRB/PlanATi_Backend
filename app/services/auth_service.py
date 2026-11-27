@@ -28,6 +28,7 @@ class ConsentContext:
 
 
 # Registro de un usuario: valida que el correo y el teléfono no estén repetidos y guarda la contraseña con hash.
+# GUIA 4 TEMA: Operaciones con cadenas -> register_user normaliza el correo con strip().lower().
 async def register_user(
     session: AsyncSession,
     full_name: str,

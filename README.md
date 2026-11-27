@@ -243,6 +243,18 @@ publica horarios); el último queda `PENDING` para probar la aprobación.
 | Planes y recordatorios | Cubierto | `POST/GET /api/v1/plans`, `GET/PATCH/DELETE /api/v1/plans/{id}`, `POST /api/v1/plans/{id}/cancel` y `GET /api/v1/plans/{id}/calendar.ics`. El total se calcula en el servidor; la hora se valida contra los horarios del local (hora de Colombia). El recordatorio llega como notificación en la app (ciclo en segundo plano con `REMINDERS_ENABLED`, o `python -m scripts.run_reminders --once` desde cron) y, al pasar el plan, una invitación a reseñar. |
 | Notificaciones en la app | Cubierto | `GET /api/v1/notifications` (paginado), `GET /api/v1/notifications/unread-count`, `POST /api/v1/notifications/{id}/read`, `POST /api/v1/notifications/read-all`, `DELETE /api/v1/notifications/{id}`. Aprobar o rechazar un establecimiento notifica a su dueño. |
 
+### Exportaciones a Excel
+
+| Descarga | Ruta | Alcance |
+|---|---|---|
+| Menú | `GET /api/v1/restaurant/exports/menu.xlsx` | Productos, combos, composición y enlaces a las imágenes del menú físico del establecimiento autenticado. |
+| Reseñas | `GET /api/v1/restaurant/exports/reviews.xlsx` | Reseñas visibles y respuestas del propio establecimiento, con las mismas reglas de moderación del panel. |
+| Establecimientos | `GET /api/v1/admin/exports/establishments.xlsx` | Directorio administrativo completo o filtrado por `status` y `search`. |
+| Menú de un local (admin) | `GET /api/v1/admin/establishments/{establishment_id}/exports/menu.xlsx` | El mismo archivo de menú para el local seleccionado. |
+| Reseñas de un local (admin) | `GET /api/v1/admin/establishments/{establishment_id}/exports/reviews.xlsx` | El mismo archivo de reseñas visibles para el local seleccionado. |
+
+Las rutas de `/restaurant` requieren que el establecimiento esté aprobado. Las rutas de `/admin` requieren rol de administrador. Los archivos contienen encabezados fijos, filtros y fechas en la zona horaria de la aplicación.
+
 ### Geolocalizacion
 
 - `GET /api/v1/establishments/nearby?latitude&longitude&radius_km` (radio máximo `NEARBY_MAX_RADIUS_KM`):

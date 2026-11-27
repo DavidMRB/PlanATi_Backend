@@ -510,7 +510,7 @@ async def list_reviews_for_owner(
     rating: int | None = None,
     sort: Literal["recent", "rating_asc"] = "recent",
     skip: int = 0,
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> tuple[list[Review], int]:
     """Reseñas VISIBLE del local del dueño (sin exigir que esté APPROVED: eso lo hace la ruta)."""
     query = _visible_reviews(establishment.id)

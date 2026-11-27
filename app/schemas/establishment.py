@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.review import MyReview, ReviewBlockReason, ReviewPublic
 
 
+# GUIA 3 TEMA: Validaciones de entrada -> Field limita el día a enteros entre 0 y 6.
 class ScheduleInput(BaseModel):
     day_of_week: int = Field(ge=0, le=6)
     opening_time: time
@@ -18,6 +19,8 @@ class ScheduleResponse(ScheduleInput):
     id: int
 
 
+# GUIA 1 TEMA: Paradigma de programación -> una clase Pydantic agrupa los campos y sus reglas.
+# GUIA 2 TEMA: Alternativa a float -> Decimal valida precios con dos decimales sin error binario.
 class MenuItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None
@@ -32,6 +35,7 @@ class ComboItemResponse(BaseModel):
     product_name: str | None = None
 
 
+# GUIA 2 TEMA: bool -> is_combo e is_available expresan verdadero o falso.
 class MenuItemResponse(MenuItemInput):
     model_config = ConfigDict(from_attributes=True)
 
@@ -52,6 +56,7 @@ class EstablishmentImageResponse(BaseModel):
     display_order: int
 
 
+# GUIA 3 TEMA: Validar entrada sin input -> Pydantic valida el JSON y FastAPI devuelve 422 ante datos inválidos.
 class EstablishmentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=150)
     category: str = Field(min_length=2, max_length=80)
