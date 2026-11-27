@@ -39,6 +39,8 @@ MIN_RATING_QUERY = Query(default=None, ge=1, le=5, description="Puntuación prom
 
 # Directorio público con búsqueda, filtros y orden (`?sort=name` = orden alfabético ascendente).
 @router.get("", response_model=list[EstablishmentListItem])
+# GUIA 1 TEMA: Alternativa a PRINT en web -> devuelve datos que FastAPI serializa como JSON.
+# GUIA 5 TEMA: Mostrar información almacenada -> expone el directorio consultado con paginación.
 async def search_establishments(
     search: str | None = Query(default=None, max_length=150),
     category: str | None = Query(default=None, max_length=80),

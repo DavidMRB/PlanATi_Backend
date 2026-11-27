@@ -22,6 +22,9 @@ class PhoneVerificationError(ValueError):
 # GUIA #7 TEMA: Cadenas, listas, tuplas y diccionarios -> índices y segmentos de cadena: se dejan solo los dígitos, `digits[2:]` quita
 # el indicativo 57, `len()` valida la longitud y una f-string arma el resultado ('+573001234567').
 # GUIA #10 TEMA: Subalgoritmos (funciones, procedimientos y modularización) -> función reutilizada en el registro y en el cambio de teléfono.
+# GUIA 4 TEMA: Variables alfanuméricas y cadenas -> el teléfono es str; re.sub, startswith y [2:] lo normalizan.
+# GUIA 3 TEMA: Validación de entrada -> rechaza longitud o prefijo incorrectos usando or y not.
+# GUIA 5 TEMA: Validar información -> devuelve el teléfono normalizado o lanza un error.
 def normalize_colombian_phone(phone_number: str) -> str:
     digits = re.sub(r"[^\d]", "", phone_number)
     if digits.startswith("57"):

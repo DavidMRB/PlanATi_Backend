@@ -17,6 +17,8 @@ from app.services.rating_service import relevance_score
 
 # GUIA #10 TEMA: Subalgoritmos (funciones, procedimientos y modularización) -> función con parámetros y `return`: distancia en km entre dos coordenadas
 # (fórmula de haversine). `radius_km`, `a` y `c` son variables locales: solo existen dentro de la función.
+# GUIA 1 TEMA: Programación funcional -> calcula una distancia usando argumentos, sin modificar registros.
+# GUIA 2 TEMA: Variable, float y operadores aritméticos -> radius_km y las diferencias se usan con -, /, **, + y *.
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     radius_km = 6371.0
     lat1_rad = math.radians(lat1)
@@ -46,6 +48,8 @@ _DETAIL_LOAD_OPTIONS = (
 
 
 # Directorio público: filtra por estado, texto, categoría, tipo y puntuación; ordena y pagina en la base de datos.
+# GUIA 2 TEMA: int, str y bool -> skip/limit, search y approved_only tipan paginación, texto y filtro.
+# GUIA 5 TEMA: Buscar información y determinar estado -> filtra nombre/categoría y registros APPROVED.
 async def list_establishments(
     session: AsyncSession,
     search: str | None = None,
@@ -63,6 +67,7 @@ async def list_establishments(
         .options(*_LIST_LOAD_OPTIONS)
         .order_by(*DIRECTORY_ORDER[sort])
     )
+    # GUIA 3 TEMA: if -> aplica el filtro de aprobados cuando la condición es verdadera.
     if approved_only:
         query = query.where(Establishment.status == "APPROVED")
     # GUIA #8 TEMA: Vectores (ordenamiento y búsqueda) -> búsqueda por atributo (nombre o categoría) sin importar mayúsculas: `strip()` + `ilike`.
@@ -82,6 +87,7 @@ async def list_establishments(
 
 # Detalle de un establecimiento por id (None si no existe; la ruta responde 404).
 # GUIA #8 TEMA: Vectores (ordenamiento y búsqueda) -> búsqueda por llave primaria indexada en la base de datos, sin recorrer la lista con un `for`.
+# GUIA 5 TEMA: Consultar información -> busca por id estable, no por posición de una lista.
 async def get_establishment(session: AsyncSession, establishment_id: int) -> Establishment | None:
     query = (
         select(Establishment)
@@ -111,6 +117,8 @@ async def list_nearby_establishments(
         category=category, establishment_type=establishment_type, min_rating=min_rating,
     )
     # GUIA #7 TEMA: Cadenas, listas, tuplas y diccionarios -> lista local de tuplas inmutables (establecimiento, distancia).
+    # GUIA 4 TEMA: Listas -> acumula pares (establecimiento, distancia) con append.
+    # GUIA 5 TEMA: Generar un resultado -> coordenadas y radio producen los lugares cercanos.
     nearby: list[tuple[Establishment, float]] = []
 
     # 2. Distancia exacta con haversine solo sobre ese subconjunto.
@@ -126,6 +134,7 @@ async def list_nearby_establishments(
             float(establishment.latitude),
             float(establishment.longitude),
         )
+        # GUIA 2 TEMA: Operador de comparación -> incluye distancias menores o iguales al radio.
         if distance <= radius_km:
             nearby.append((establishment, distance))
 
@@ -133,17 +142,21 @@ async def list_nearby_establishments(
     # rating y relevance ordenan de mayor a menor con el signo menos. `nearby[:limit]` toma los primeros N.
     # GUIA #10 TEMA: Subalgoritmos (funciones, procedimientos y modularización) -> la `lambda` es el criterio de orden y llama a la función `relevance_score`.
     # 3. Orden según `sort` (sort() es estable: a igual criterio, queda el más cercano primero).
+    # GUIA 4 TEMA: Posiciones e índices -> item[1] consulta la distancia de la tupla.
     nearby.sort(key=lambda item: item[1])
     if sort == "rating":
         nearby.sort(key=lambda item: (-(item[0].rating_avg or 0), -item[0].rating_count))
     elif sort == "relevance":
         nearby.sort(key=lambda item: -relevance_score(item[0].ranking_score, item[1], radius_km))
+    # GUIA 4 TEMA: Consulta de elementos -> el segmento selecciona los primeros resultados de la lista.
     return nearby[:limit]
 
 
 # Registro de un establecimiento nuevo con sus horarios y su menú.
 # GUIA #7 TEMA: Cadenas, listas, tuplas y diccionarios -> `strip()` limpia las cadenas y las comprensiones de lista crean horarios y menú;
 # `session.add()` cumple el papel de `append()`, pero sobre la tabla de PostgreSQL.
+# GUIA 1 TEMA: Paradigmas y programación imperativa -> construye un objeto y ejecuta pasos para persistirlo.
+# GUIA 5 TEMA: Registrar información -> add, commit y refresh guardan el registro en la base de datos.
 async def create_establishment(
     session: AsyncSession,
     owner_id: int,
@@ -168,6 +181,7 @@ async def create_establishment(
 
 
 # Actualización parcial: solo cambia los campos que llegaron en la petición.
+# GUIA 5 TEMA: Actualizar información -> aplica solo campos recibidos y confirma la transacción.
 async def update_establishment(
     session: AsyncSession,
     establishment: Establishment,
@@ -232,6 +246,7 @@ class OutOfServiceAreaError(Exception):
 
 # GUIA #10 TEMA: Subalgoritmos (funciones, procedimientos y modularización) -> procedimiento (`-> None`): no devuelve un valor; lanza una excepción si el punto
 # queda fuera de la zona de servicio.
+# GUIA 3 TEMA: and, or, not -> comprueba ausencia y niega la pertenencia a ambos rangos geográficos.
 def ensure_in_service_area(latitude: Decimal | float | None, longitude: Decimal | float | None) -> None:
     if latitude is None or longitude is None or settings.service_area is None:
         return

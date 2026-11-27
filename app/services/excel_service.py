@@ -27,6 +27,7 @@ BODY_FONT = Font(name="Arial", size=11, color="17243D")
 HEADER_FILL = PatternFill("solid", fgColor="514DDD")
 STRIPE_FILL = PatternFill("solid", fgColor="F1F3FF")
 
+# GUIA 5 TEMA: Determinar estado -> traduce el estado almacenado a una etiqueta para Excel.
 STATUS_LABELS = {
     "PENDING": "Pendiente",
     "APPROVED": "Aprobado",
@@ -44,9 +45,11 @@ TYPE_LABELS = {
 }
 
 
+# GUIA 11 TEMA: Exportación a Excel -> escribe y da formato a cada celda con openpyxl.
 def _write_row(sheet: Worksheet, index: int, values: Sequence, *, heading: bool = False) -> None:
     for column, value in enumerate(values, start=1):
         cell = sheet.cell(index, column)
+        # GUIA 3 TEMA: if elif else -> distingue texto, fecha y otros valores antes de escribir.
         if isinstance(value, str):
             # El contenido aportado por usuarios se conserva como texto, incluso si empieza con "=".
             cell.value = ILLEGAL_CHARACTERS_RE.sub("", value)
@@ -58,10 +61,12 @@ def _write_row(sheet: Worksheet, index: int, values: Sequence, *, heading: bool 
             cell.value = value
         cell.alignment = ROW_ALIGNMENT
         cell.font = HEADER_FONT if heading else BODY_FONT
+        # GUIA 2 TEMA: Aritmética y comparación -> % calcula paridad y == permite alternar filas.
         if heading or index % 2 == 1:
             cell.fill = HEADER_FILL if heading else STRIPE_FILL
 
 
+# GUIA 11 TEMA: Filas y columnas -> título, encabezados, anchos, filtros y paneles inmovilizados.
 def _write_sheet(
     sheet: Worksheet,
     title: str,
@@ -91,6 +96,7 @@ def _write_sheet(
     sheet.auto_filter.ref = f"A2:{last_column}{last_row}"
 
 
+# GUIA 11 TEMA: Generar archivo Excel -> guarda en BytesIO y entrega .xlsx por HTTP sin archivo permanente.
 def _download(book: Workbook, filename: str) -> Response:
     book.properties.creator = "PlanATi"
     with BytesIO() as output:
@@ -103,12 +109,14 @@ def _download(book: Workbook, filename: str) -> Response:
     )
 
 
+# GUIA 11 TEMA: Consultar datos -> obtiene catálogo e imágenes y genera el libro fuera del bucle asíncrono.
 async def export_menu(session: AsyncSession, establishment: Establishment) -> Response:
     items = await restaurant_service.list_catalog(session, establishment)
     images = await restaurant_service.list_establishment_images(session, establishment, "MENU")
     return await run_in_threadpool(menu_workbook, establishment.id, establishment.name, items, images)
 
 
+# GUIA 11 TEMA: Exportar reseñas -> usa la representación pública para respetar la moderación.
 async def export_reviews(session: AsyncSession, establishment: Establishment) -> Response:
     reviews, _ = await review_service.list_reviews_for_owner(session, establishment, limit=None)
     public_reviews = [review_service.to_public_review(review) for review in reviews]
@@ -118,6 +126,7 @@ async def export_reviews(session: AsyncSession, establishment: Establishment) ->
 def menu_workbook(
     establishment_id: int, name: str, items: list[MenuItem], menu_images: list[EstablishmentImage]
 ) -> Response:
+    # GUIA 11 TEMA: Libro y hojas -> crea Productos, Combos y Composición con openpyxl.
     book = Workbook()
     products = book.active
     products.title = "Productos"
@@ -131,12 +140,15 @@ def menu_workbook(
     def catalog_row(item: MenuItem) -> tuple:
         return (item.id, item.name, item.description, item.price, "Sí" if item.is_available else "No", item.image_url)
 
+    # GUIA 4 TEMA: Listas -> comprensión que selecciona los combos del catálogo.
+    # GUIA 5 TEMA: Clasificar información -> separa productos y combos para sus hojas.
     combos = [item for item in items if item.is_combo]
     _write_sheet(
         products, f"Productos · {name}", columns,
         (catalog_row(item) for item in items if not item.is_combo),
         formats={4: PRICE_FORMAT},
     )
+    # GUIA 1 TEMA: Programación funcional -> map transforma cada combo con catalog_row.
     _write_sheet(combos_sheet, f"Combos · {name}", columns, map(catalog_row, combos), formats={4: PRICE_FORMAT})
     _write_sheet(
         components,
@@ -183,6 +195,7 @@ def reviews_workbook(establishment_id: int, name: str, reviews: list[ReviewPubli
     return _download(book, f"resenas-establecimiento-{establishment_id}.xlsx")
 
 
+# GUIA 11 TEMA: Exportar establecimientos -> genera el directorio administrativo con sus estados y contactos.
 def establishments_workbook(establishments: list[tuple[Establishment, User, int]]) -> Response:
     book = Workbook()
     sheet = book.active

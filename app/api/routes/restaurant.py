@@ -123,6 +123,7 @@ async def update_restaurant_profile(
 # --- Reseñas y respuestas (fase 2, B4) ---------------------------------------------------------
 
 
+# GUIA 11 TEMA: Exportar menú -> el restaurante aprobado descarga únicamente su propio catálogo.
 @router.get("/exports/menu.xlsx", response_class=Response, responses=XLSX_RESPONSE)
 async def export_restaurant_menu(
     context: RestaurantContext = Depends(require_approved_restaurant),
@@ -131,6 +132,7 @@ async def export_restaurant_menu(
     return await export_menu(session, context[1])
 
 
+# GUIA 11 TEMA: Exportar reseñas -> el contexto autorizado limita la descarga al propio establecimiento.
 @router.get("/exports/reviews.xlsx", response_class=Response, responses=XLSX_RESPONSE)
 async def export_restaurant_reviews(
     context: RestaurantContext = Depends(require_approved_restaurant),
