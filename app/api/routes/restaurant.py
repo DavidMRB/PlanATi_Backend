@@ -22,6 +22,7 @@ from app.schemas.restaurant import (
 )
 from app.schemas.review import ReviewPublic, ReviewReplyCreate, RestaurantReviewSummary
 from app.services import restaurant_service, review_service
+from app.services.excel_service import XLSX_RESPONSE, export_menu, export_reviews
 from app.services.rating_service import category_rank, rating_distribution
 from app.services.review_service import ReplyFilter, to_public_review
 from app.services.establishment_service import OutOfServiceAreaError
@@ -120,6 +121,22 @@ async def update_restaurant_profile(
 
 
 # --- Reseñas y respuestas (fase 2, B4) ---------------------------------------------------------
+
+
+@router.get("/exports/menu.xlsx", response_class=Response, responses=XLSX_RESPONSE)
+async def export_restaurant_menu(
+    context: RestaurantContext = Depends(require_approved_restaurant),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    return await export_menu(session, context[1])
+
+
+@router.get("/exports/reviews.xlsx", response_class=Response, responses=XLSX_RESPONSE)
+async def export_restaurant_reviews(
+    context: RestaurantContext = Depends(require_approved_restaurant),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    return await export_reviews(session, context[1])
 
 
 @router.get("/reviews", response_model=Page[ReviewPublic])
